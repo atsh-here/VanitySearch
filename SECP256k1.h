@@ -26,6 +26,7 @@
 #define P2PKH  0
 #define P2SH   1
 #define BECH32 2
+#define P2TR   3
 
 class Secp256K1 {
 
@@ -44,6 +45,8 @@ public:
     uint8_t *h0, uint8_t *h1, uint8_t *h2, uint8_t *h3);
 
   void GetHash160(int type,bool compressed, Point &pubKey, unsigned char *hash);
+  bool GetTaprootOutputKey(Point &internalKey, unsigned char *xOnlyOutput);
+  std::string GetTaprootAddress(Point &internalKey);
 
   std::string GetAddress(int type, bool compressed, Point &pubKey);
   std::string GetAddress(int type, bool compressed, unsigned char *hash160);
