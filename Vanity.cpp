@@ -243,7 +243,11 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
       break;
     case 'b':
     case 'B':
-      searchType = BECH32;
+      if (inputPrefixes[0].length() >= 4 &&
+          (inputPrefixes[0].substr(0, 4) == "bc1p" || inputPrefixes[0].substr(0, 4) == "BC1P"))
+        searchType = P2TR;
+      else
+        searchType = BECH32;
       break;
 
     default:
@@ -262,6 +266,14 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
     patternFound = (bool *)malloc(inputPrefixes.size()*sizeof(bool));
     memset(patternFound,0, inputPrefixes.size() * sizeof(bool));
 
+  }
+
+  if (searchType == P2TR) {
+    useSSE = false;
+    if (useGpu) {
+      printf("Taproot GPU kernel is not available in this build; simulating with optimized CPU search.\n");
+      useGpu = false;
+    }
   }
 
   // Compute Generator table G[n] = (n+1)*G
@@ -362,6 +374,8 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::tolower);
     if(strncmp(prefix.c_str(), "bc1q", 4) == 0)
       aType = BECH32;
+    else if(strncmp(prefix.c_str(), "bc1p", 4) == 0)
+      aType = P2TR;
     break;
   }
 
@@ -376,9 +390,9 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     return false;
   }
 
-  if (aType == BECH32) {
+  if (aType == BECH32 || aType == P2TR) {
 
-    // BECH32
+    // BECH32/BECH32m
     uint8_t witprog[40];
     size_t witprog_len;
     int witver;
@@ -387,12 +401,14 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
     int ret = segwit_addr_decode(&witver, witprog, &witprog_len, hrp, prefix.c_str());
 
     // Try to attack a full address ?
-    if (ret && witprog_len==20) {
+    if (ret && ((aType == BECH32 && witver == 0 && witprog_len == 20) ||
+                (aType == P2TR && witver == 1 && witprog_len == 32))) {
 
       // mamma mia !
-      it->difficulty = pow(2, 160);
+      it->difficulty = pow(2, aType == P2TR ? 256 : 160);
       it->isFull = true;
-      memcpy(it->hash160, witprog, 20);
+      memset(it->hash160, 0, sizeof(it->hash160));
+      memcpy(it->hash160, witprog, aType == P2TR ? sizeof(it->hash160) : witprog_len);
       it->sPrefix = *(prefix_t *)(it->hash160);
       it->lPrefix = *(prefixl_t *)(it->hash160);
       it->prefix = (char *)prefix.c_str();
@@ -406,7 +422,7 @@ bool VanitySearch::initPrefix(std::string &prefix,PREFIX_ITEM *it) {
       return false;
     }
 
-    if (prefix.length() >= 36) {
+    if (aType == BECH32 && prefix.length() >= 36) {
       printf("Ignoring prefix \"%s\" (too long, length>36 )\n", prefix.c_str());
       return false;
     }
@@ -708,6 +724,9 @@ void VanitySearch::output(string addr,string pAddr,string pAddrHex) {
     case BECH32:
       fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
       break;
+    case P2TR:
+      fprintf(f, "Priv (WIF): p2tr-internal:%s\n", pAddr.c_str());
+      break;
     }
     fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
@@ -888,6 +907,52 @@ void VanitySearch::checkAddrSSE(uint8_t *h1, uint8_t *h2, uint8_t *h3, uint8_t *
 
 }
 
+
+void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, int32_t incr, int endomorphism) {
+
+  string addr = secp->GetAddress(P2TR, true, outputKey);
+
+  if (hasPattern) {
+    for (int i = 0; i < (int)inputPrefixes.size(); i++) {
+      if (Wildcard::match(addr.c_str(), inputPrefixes[i].c_str(), caseSensitive)) {
+        if (checkPrivKey(addr, key, incr, endomorphism, true)) {
+          nbFoundKey++;
+          patternFound[i] = true;
+          updateFound();
+        }
+      }
+    }
+    return;
+  }
+
+  for (int p = 0; p < (int)usedPrefix.size(); p++) {
+    vector<PREFIX_ITEM> *pi = prefixes[usedPrefix[p]].items;
+    if (!pi) {
+      continue;
+    }
+
+    for (int i = 0; i < (int)pi->size(); i++) {
+      if (stopWhenFound && *((*pi)[i].found))
+        continue;
+
+      if ((*pi)[i].isFull) {
+        // Full Taproot addresses are verified by comparing the encoded address.
+        if (addr != string((*pi)[i].prefix))
+          continue;
+      } else if (strncmp((*pi)[i].prefix, addr.c_str(), (*pi)[i].prefixLength) != 0) {
+        continue;
+      }
+
+      *((*pi)[i].found) = true;
+      if (checkPrivKey(addr, key, incr, endomorphism, true)) {
+        nbFoundKey++;
+        updateFound();
+      }
+    }
+  }
+
+}
+
 void VanitySearch::checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t incr, int endomorphism, bool mode) {
 
   if (hasPattern) {
@@ -997,9 +1062,45 @@ void *_FindKeyGPU(void *lpParam) {
 
 void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
 
-  unsigned char h0[20];
+  unsigned char h0[32];
   Point pte1[1];
   Point pte2[1];
+
+  if (searchType == P2TR) {
+
+    if (secp->GetTaprootOutputKey(p1, h0)) {
+      checkTaprootAddr(0, h0, key, i, 0);
+    }
+
+    pte1[0].x.ModMulK1(&p1.x, &beta);
+    pte1[0].y.Set(&p1.y);
+    if (secp->GetTaprootOutputKey(pte1[0], h0)) {
+      checkTaprootAddr(0, h0, key, i, 1);
+    }
+
+    pte2[0].x.ModMulK1(&p1.x, &beta2);
+    pte2[0].y.Set(&p1.y);
+    if (secp->GetTaprootOutputKey(pte2[0], h0)) {
+      checkTaprootAddr(0, h0, key, i, 2);
+    }
+
+    p1.y.ModNeg();
+    if (secp->GetTaprootOutputKey(p1, h0)) {
+      checkTaprootAddr(0, h0, key, -i, 0);
+    }
+
+    pte1[0].y.ModNeg();
+    if (secp->GetTaprootOutputKey(pte1[0], h0)) {
+      checkTaprootAddr(0, h0, key, -i, 1);
+    }
+
+    pte2[0].y.ModNeg();
+    if (secp->GetTaprootOutputKey(pte2[0], h0)) {
+      checkTaprootAddr(0, h0, key, -i, 2);
+    }
+
+    return;
+  }
 
   // Point
   secp->GetHash160(searchType,compressed, p1, h0);
@@ -1414,13 +1515,13 @@ void VanitySearch::FindKeyCPU(TH_PARAM *ph) {
     // Check
     {
       bool wrong = false;
-      Point p0 = secp.ComputePublicKey(&key);
+      Point p0 = secp->ComputePublicKey(&key);
       for (int i = 0; i < CPU_GRP_SIZE; i++) {
         if (!p0.equals(pts[i])) {
           wrong = true;
           printf("[%d] wrong point\n",i);
         }
-        p0 = secp.NextKey(p0);
+        p0 = secp->NextKey(p0);
       }
       if(wrong) exit(0);
     }
