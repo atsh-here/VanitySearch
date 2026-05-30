@@ -269,10 +269,10 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   }
 
   if (searchType == P2TR) {
-    this->useSSE = false;
-    if (this->useGpu) {
+    useSSE = false;
+    if (useGpu) {
       printf("Taproot GPU kernel is not available in this build; simulating with optimized CPU search.\n");
-      this->useGpu = false;
+      useGpu = false;
     }
   }
 
@@ -910,51 +910,23 @@ void VanitySearch::checkAddrSSE(uint8_t *h1, uint8_t *h2, uint8_t *h3, uint8_t *
 
 void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, int32_t incr, int endomorphism) {
 
-  (void)prefIdx;
-  (void)outputKey;
-
-  Int k(&key);
-  Point sp = startPubKey;
-
-  if (incr < 0) {
-    k.Add((uint64_t)(-incr));
-    k.Neg();
-    k.Add(&secp->order);
-    if (startPubKeySpecified) sp.y.ModNeg();
-  } else {
-    k.Add((uint64_t)incr);
-  }
-
-  switch (endomorphism) {
-  case 1:
-    k.ModMulK1order(&lambda);
-    if (startPubKeySpecified) sp.x.ModMulK1(&beta);
-    break;
-  case 2:
-    k.ModMulK1order(&lambda2);
-    if (startPubKeySpecified) sp.x.ModMulK1(&beta2);
-    break;
-  }
-
-  Point p = secp->ComputePublicKey(&k);
-  if (startPubKeySpecified) p = secp->AddDirect(p, sp);
-
-  string addr = secp->GetAddress(P2TR, true, p);
+  string addr = secp->GetAddress(P2TR, true, outputKey);
 
   if (hasPattern) {
     for (int i = 0; i < (int)inputPrefixes.size(); i++) {
       if (Wildcard::match(addr.c_str(), inputPrefixes[i].c_str(), caseSensitive)) {
-        output(addr, secp->GetPrivAddress(true, k), k.GetBase16());
-        nbFoundKey++;
-        patternFound[i] = true;
-        updateFound();
+        if (checkPrivKey(addr, key, incr, endomorphism, true)) {
+          nbFoundKey++;
+          patternFound[i] = true;
+          updateFound();
+        }
       }
     }
     return;
   }
 
-  for (int pidx = 0; pidx < (int)usedPrefix.size(); pidx++) {
-    vector<PREFIX_ITEM> *pi = prefixes[usedPrefix[pidx]].items;
+  for (int p = 0; p < (int)usedPrefix.size(); p++) {
+    vector<PREFIX_ITEM> *pi = prefixes[usedPrefix[p]].items;
     if (!pi) {
       continue;
     }
@@ -964,6 +936,7 @@ void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, i
         continue;
 
       if ((*pi)[i].isFull) {
+        // Full Taproot addresses are verified by comparing the encoded address.
         if (addr != string((*pi)[i].prefix))
           continue;
       } else if (strncmp((*pi)[i].prefix, addr.c_str(), (*pi)[i].prefixLength) != 0) {
@@ -971,9 +944,10 @@ void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, i
       }
 
       *((*pi)[i].found) = true;
-      output(addr, secp->GetPrivAddress(true, k), k.GetBase16());
-      nbFoundKey++;
-      updateFound();
+      if (checkPrivKey(addr, key, incr, endomorphism, true)) {
+        nbFoundKey++;
+        updateFound();
+      }
     }
   }
 
@@ -1094,12 +1068,36 @@ void VanitySearch::checkAddresses(bool compressed, Int key, int i, Point p1) {
 
   if (searchType == P2TR) {
 
-    checkTaprootAddr(0, h0, key, i, 0);
-    checkTaprootAddr(0, h0, key, i, 1);
-    checkTaprootAddr(0, h0, key, i, 2);
-    checkTaprootAddr(0, h0, key, -i, 0);
-    checkTaprootAddr(0, h0, key, -i, 1);
-    checkTaprootAddr(0, h0, key, -i, 2);
+    if (secp->GetTaprootOutputKey(p1, h0)) {
+      checkTaprootAddr(0, h0, key, i, 0);
+    }
+
+    pte1[0].x.ModMulK1(&p1.x, &beta);
+    pte1[0].y.Set(&p1.y);
+    if (secp->GetTaprootOutputKey(pte1[0], h0)) {
+      checkTaprootAddr(0, h0, key, i, 1);
+    }
+
+    pte2[0].x.ModMulK1(&p1.x, &beta2);
+    pte2[0].y.Set(&p1.y);
+    if (secp->GetTaprootOutputKey(pte2[0], h0)) {
+      checkTaprootAddr(0, h0, key, i, 2);
+    }
+
+    p1.y.ModNeg();
+    if (secp->GetTaprootOutputKey(p1, h0)) {
+      checkTaprootAddr(0, h0, key, -i, 0);
+    }
+
+    pte1[0].y.ModNeg();
+    if (secp->GetTaprootOutputKey(pte1[0], h0)) {
+      checkTaprootAddr(0, h0, key, -i, 1);
+    }
+
+    pte2[0].y.ModNeg();
+    if (secp->GetTaprootOutputKey(pte2[0], h0)) {
+      checkTaprootAddr(0, h0, key, -i, 2);
+    }
 
     return;
   }
