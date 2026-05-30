@@ -226,6 +226,9 @@ void outputAdd(string outputFile, int addrType, string addr, string pAddr, strin
   case BECH32:
     fprintf(f, "Priv (WIF): p2wpkh:%s\n", pAddr.c_str());
     break;
+  case P2TR:
+    fprintf(f, "Priv (WIF): p2tr-internal:%s\n", pAddr.c_str());
+    break;
   }
   fprintf(f, "Priv (HEX): 0x%s\n", pAddrHex.c_str());
 
@@ -461,6 +464,7 @@ int main(int argc, char* argv[]) {
       printf("Addr (P2PKH): %s\n",secp->GetAddress(P2PKH,isComp,p).c_str());
       printf("Addr (P2SH): %s\n",secp->GetAddress(P2SH,isComp,p).c_str());
       printf("Addr (BECH32): %s\n",secp->GetAddress(BECH32,isComp,p).c_str());
+      printf("Addr (P2TR): %s\n",secp->GetAddress(P2TR,true,p).c_str());
       exit(0);
     } else if (strcmp(argv[a], "-cp") == 0) {
       a++;
@@ -478,6 +482,7 @@ int main(int argc, char* argv[]) {
       printf("Addr (P2PKH): %s\n", secp->GetAddress(P2PKH,isComp,p).c_str());
       printf("Addr (P2SH): %s\n", secp->GetAddress(P2SH,isComp,p).c_str());
       printf("Addr (BECH32): %s\n", secp->GetAddress(BECH32,isComp,p).c_str());
+      printf("Addr (P2TR): %s\n", secp->GetAddress(P2TR,true,p).c_str());
       exit(0);
     } else if (strcmp(argv[a], "-rp") == 0) {
       a++;

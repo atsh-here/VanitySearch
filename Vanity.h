@@ -84,6 +84,7 @@ private:
   std::string GetExpectedTime(double keyRate, double keyCount);
   bool checkPrivKey(std::string addr, Int &key, int32_t incr, int endomorphism, bool mode);
   void checkAddr(int prefIdx, uint8_t *hash160, Int &key, int32_t incr, int endomorphism, bool mode);
+  void checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, int32_t incr, int endomorphism);
   void checkAddrSSE(uint8_t *h1, uint8_t *h2, uint8_t *h3, uint8_t *h4,
                     int32_t incr1, int32_t incr2, int32_t incr3, int32_t incr4,
                     Int &key, int endomorphism, bool mode);
