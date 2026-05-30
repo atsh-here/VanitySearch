@@ -269,10 +269,10 @@ VanitySearch::VanitySearch(Secp256K1 *secp, vector<std::string> &inputPrefixes,s
   }
 
   if (searchType == P2TR) {
-    this->useSSE = false;
-    if (this->useGpu) {
+    useSSE = false;
+    if (useGpu) {
       printf("Taproot GPU kernel is not available in this build; simulating with optimized CPU search.\n");
-      this->useGpu = false;
+      useGpu = false;
     }
   }
 
@@ -910,7 +910,6 @@ void VanitySearch::checkAddrSSE(uint8_t *h1, uint8_t *h2, uint8_t *h3, uint8_t *
 
 void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, int32_t incr, int endomorphism) {
 
-  (void)prefIdx;
   string addr = secp->GetAddress(P2TR, true, outputKey);
 
   if (hasPattern) {
@@ -926,8 +925,8 @@ void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, i
     return;
   }
 
-  for (int pidx = 0; pidx < (int)usedPrefix.size(); pidx++) {
-    vector<PREFIX_ITEM> *pi = prefixes[usedPrefix[pidx]].items;
+  for (int p = 0; p < (int)usedPrefix.size(); p++) {
+    vector<PREFIX_ITEM> *pi = prefixes[usedPrefix[p]].items;
     if (!pi) {
       continue;
     }
@@ -937,6 +936,7 @@ void VanitySearch::checkTaprootAddr(int prefIdx, uint8_t *outputKey, Int &key, i
         continue;
 
       if ((*pi)[i].isFull) {
+        // Full Taproot addresses are verified by comparing the encoded address.
         if (addr != string((*pi)[i].prefix))
           continue;
       } else if (strncmp((*pi)[i].prefix, addr.c_str(), (*pi)[i].prefixLength) != 0) {
