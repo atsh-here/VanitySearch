@@ -600,6 +600,63 @@ void Secp256K1::GetHash160(int type, bool compressed, Point &pubKey, unsigned ch
 
 }
 
+
+static const uint8_t TAPTWEAK_TAG_HASH[32] = {
+  0xe8, 0x0f, 0xe1, 0x63, 0x9c, 0x9c, 0xa0, 0x50,
+  0xe3, 0xaf, 0x1b, 0x39, 0xc1, 0x43, 0xc6, 0x3e,
+  0x42, 0x9c, 0xbc, 0xeb, 0x15, 0xd9, 0x40, 0xfb,
+  0xb5, 0xc5, 0xa1, 0xf4, 0xaf, 0x57, 0xc5, 0xe9
+};
+
+bool Secp256K1::GetTaprootOutputKey(Point &internalKey, unsigned char *xOnlyOutput) {
+
+  if (internalKey.isZero()) {
+    return false;
+  }
+
+  uint8_t preimage[96];
+  uint8_t tweakBytes[32];
+  memcpy(preimage, TAPTWEAK_TAG_HASH, 32);
+  memcpy(preimage + 32, TAPTWEAK_TAG_HASH, 32);
+  internalKey.x.Get32Bytes(preimage + 64);
+  sha256(preimage, sizeof(preimage), tweakBytes);
+
+  Int tweak;
+  tweak.Set32Bytes(tweakBytes);
+  if (tweak.IsGreaterOrEqual(&order)) {
+    return false;
+  }
+
+  Point normalizedInternal;
+  normalizedInternal.x.Set(&internalKey.x);
+  normalizedInternal.y.Set(&internalKey.y);
+  normalizedInternal.z.SetInt32(1);
+  if (normalizedInternal.y.IsOdd()) {
+    normalizedInternal.y.ModNeg();
+  }
+
+  Point tweakPoint = ComputePublicKey(&tweak);
+  Point outputPoint = AddDirect(normalizedInternal, tweakPoint);
+  if (outputPoint.isZero()) {
+    return false;
+  }
+
+  outputPoint.x.Get32Bytes(xOnlyOutput);
+  return true;
+}
+
+std::string Secp256K1::GetTaprootAddress(Point &internalKey) {
+
+  unsigned char outputKey[32];
+  char output[128];
+  if (!GetTaprootOutputKey(internalKey, outputKey)) {
+    return " P2TR: Only even Y internal key ";
+  }
+  segwit_addr_encode(output, "bc", 1, outputKey, 32);
+  return std::string(output);
+
+}
+
 std::string Secp256K1::GetPrivAddress(bool compressed,Int &privKey) {
 
   unsigned char address[38];
@@ -685,6 +742,9 @@ std::vector<std::string> Secp256K1::GetAddress(int type, bool compressed, unsign
     return ret;
   }
   break;
+
+  case P2TR:
+    return ret;
   }
 
   memcpy(add1 + 1, h1, 20);
@@ -727,6 +787,13 @@ std::string Secp256K1::GetAddress(int type, bool compressed,unsigned char *hash1
       return std::string(output);
     }
     break;
+
+    case P2TR:
+    {
+      char output[128];
+      segwit_addr_encode(output, "bc", 1, hash160, 32);
+      return std::string(output);
+    }
   }
   memcpy(address + 1, hash160,20);
   sha256_checksum(address,21,address+21);
@@ -758,6 +825,9 @@ std::string Secp256K1::GetAddress(int type, bool compressed, Point &pubKey) {
     return std::string(output);
   }
   break;
+
+  case P2TR:
+    return GetTaprootAddress(pubKey);
 
   case P2SH:
     if (!compressed) {

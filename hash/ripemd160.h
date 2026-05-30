@@ -21,6 +21,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
+#include <cstdint>
+#include <cstddef>
 
 /** A hasher class for RIPEMD-160. */
 class CRIPEMD160

@@ -80,6 +80,13 @@ int bech32_encode(
   size_t data_len
 );
 
+int bech32m_encode(
+  char *output,
+  const char *hrp,
+  const uint8_t *data,
+  size_t data_len
+);
+
 /** Decode a Bech32 string
  *
  *  Out: hrp:      Pointer to a buffer of size strlen(input) - 6. Will be
