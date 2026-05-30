@@ -1684,10 +1684,10 @@ void VanitySearch::FindKeyGPU(TH_PARAM *ph) {
 
 bool VanitySearch::isAlive(TH_PARAM *p) {
 
-  bool isAlive = true;
+  bool isAlive = false;
   int total = nbCPUThread + nbGPUThread;
   for(int i=0;i<total;i++)
-    isAlive = isAlive && p[i].isRunning;
+    isAlive = isAlive || p[i].isRunning;
 
   return isAlive;
 
